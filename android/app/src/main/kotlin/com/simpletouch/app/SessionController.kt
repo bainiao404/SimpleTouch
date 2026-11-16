@@ -58,7 +58,15 @@ class SessionController(context: Context) {
                 when (message) {
                     is StMessage.Hello -> log("HELLO: ${message.name} ver=${message.version} caps=0x${Integer.toHexString(message.caps)}")
                     is StMessage.Ready -> log("PC READY（注入器就绪）")
-                    is StMessage.Ping -> log("PING seq=$seq → 已回 PONG")
+                    is StMessage.Ping -> {
+                        // 协议 §5：PING 自动回显 PONG（PC 端以此测 RTT）
+                        try {
+                            server?.send(StMessage.Pong(message.timestamp))
+                        } catch (e: Exception) {
+                            log("回 PONG 失败: ${e.message}")
+                        }
+                        log("PING seq=$seq → 已回 PONG")
+                    }
                     is StMessage.Bye -> log("PC 优雅断开 (reason=${message.reason})")
                     is StMessage.Unknown -> Unit // 兼容规则：未知类型丢弃
                     else -> Unit

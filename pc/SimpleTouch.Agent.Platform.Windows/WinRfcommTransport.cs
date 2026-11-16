@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using SimpleTouch.Core;
 using SimpleTouch.Core.Protocol;
 using Windows.Devices.Bluetooth;
+using Windows.Devices.Bluetooth.Rfcomm;
 using Windows.Devices.Enumeration;
 using Windows.Networking.Sockets;
 using Windows.Storage.Streams;
@@ -37,22 +38,25 @@ public sealed class WinRfcommTransport : ITransport
         var info = paired.FirstOrDefault(d => string.Equals(d.Name, deviceName, StringComparison.OrdinalIgnoreCase))
             ?? throw new InvalidOperationException(
                 $"未找到已配对设备“{deviceName}”。已配对: [{string.Join("、", paired.Select(d => d.Name).Where(n => n.Length > 0))}]");
+        var address = ParseBluetoothAddress(info.Id);
 
-        var device = await BluetoothDevice.FromBluetoothAddressAsync(ParseBluetoothAddress(info.Id));
-        if (device is null)
-            throw new InvalidOperationException($"无法打开蓝牙设备句柄: {info.Name}");
+        // 实测结论：GetRfcommServicesAsync(Uncached/Cached) 在本机适配器上恒返回 0；
+        // 可用路径是服务选择器 + FromIdAsync（MS Rfcomm Chat 样例同款），要求配对时手机端服务已注册。
+        var serviceSelector = RfcommDeviceService.GetDeviceSelector(RfcommServiceId.FromUuid(serviceUuid));
+        var serviceInfos = (await DeviceInformation.FindAllAsync(serviceSelector).AsTask(ct)).ToList();
 
-        // 优先实时 SDP 发现（要求手机端服务已注册且在范围内），失败回退配对缓存记录
-        var live = await device.GetRfcommServicesAsync(BluetoothCacheMode.Uncached).AsTask(ct);
-        var service = live.Services.FirstOrDefault(s => s.ServiceId.Uuid == serviceUuid);
-        if (service is null)
+        RfcommDeviceService? service = null;
+        foreach (var si in serviceInfos)
         {
-            var cached = await device.GetRfcommServicesAsync(BluetoothCacheMode.Cached).AsTask(ct);
-            service = cached.Services.FirstOrDefault(s => s.ServiceId.Uuid == serviceUuid);
+            if (ParseBluetoothAddress(si.Id) != address) continue;
+            service = await RfcommDeviceService.FromIdAsync(si.Id).AsTask(ct);
+            break;
         }
+
         if (service is null)
             throw new InvalidOperationException(
-                $"未发现 SimpleTouch RFCOMM 服务({serviceUuid})：请确认手机端 App 已启动并处于监听状态");
+                $"未发现 SimpleTouch RFCOMM 服务({serviceUuid})：请确认手机端 App 已启动并处于监听状态，" +
+                "且配对发生在监听期间（必要时重新配对）");
 
         var socket = new StreamSocket();
         await socket.ConnectAsync(

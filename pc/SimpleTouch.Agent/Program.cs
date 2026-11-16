@@ -80,6 +80,11 @@ try
     await session.SendAsync(new ByeMessage(ProtocolConsts.ByeReason.Normal), CancellationToken.None);
     return 0;
 }
+catch (OperationCanceledException) when (!cts.IsCancellationRequested)
+{
+    Log.Error("PING 超时（5s 内未收到 PONG）或握手超时");
+    return 2;
+}
 catch (OperationCanceledException)
 {
     Log.Info("用户取消（Ctrl+C）");
