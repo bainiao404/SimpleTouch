@@ -24,11 +24,31 @@ if (argsList.Contains("--list"))
     return 0;
 }
 
+if (argsList.Contains("--diag"))
+{
+    var diagDevice = argsList.FirstOrDefault(a => !a.StartsWith('-')) ?? "Xiaomi Pad 5 Pro";
+    await DeviceDiagnostics.DumpAsync(diagDevice, ProtocolConsts.RfcommServiceUuid, cts.Token);
+    return 0;
+}
+
 var deviceName = argsList.FirstOrDefault(a => !a.StartsWith('-')) ?? "Xiaomi Pad 5 Pro";
 Log.Info($"SimpleTouch Agent 启动（协议 v{ProtocolConsts.ProtocolVersion}），目标设备: {deviceName}");
 
 try
 {
+    if (argsList.Contains("--repair"))
+    {
+        Log.Info("=== 重新配对流程 ===");
+        Log.Info("请配合：① 平板端先删除本机配对（如未删）② 保持平板蓝牙设置页打开 ③ App 保持监听中");
+        var repaired = await RepairFlow.RunAsync(deviceName, cts.Token);
+        if (!repaired)
+        {
+            Log.Error("重新配对未能缓存 SimpleTouch 服务，中止");
+            return 1;
+        }
+        Log.Info("SimpleTouch 服务已进入配对缓存，继续连接验收");
+    }
+
     await using var transport = await WinRfcommTransport.ConnectAsync(deviceName, ProtocolConsts.RfcommServiceUuid, cts.Token);
     await using var session = new ProtocolSession(transport);
     await transport.StartReceivingAsync();

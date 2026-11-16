@@ -132,6 +132,9 @@ public sealed class WinRfcommTransport : ITransport
     }
 
     /// <summary>DeviceInformation.Id 形如 "Bluetooth#BluetoothAA:BB:CC:DD:EE:FF-..."，解析出 MAC 地址。</summary>
+    internal static ulong ParseAddressForDiagnostics(string deviceInfoId) => ParseBluetoothAddress(deviceInfoId);
+
+    /// <summary>DeviceInformation.Id 形如 "Bluetooth#BluetoothAA:BB:CC:DD:EE:FF-..."，解析出 MAC 地址。</summary>
     private static ulong ParseBluetoothAddress(string deviceInfoId)
     {
         const string marker = "Bluetooth#Bluetooth";
