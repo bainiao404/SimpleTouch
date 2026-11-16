@@ -42,3 +42,19 @@ SimpleTouch.Agent.Ui   (新)   WPF 托盘（NotifyIcon+GDI+ 图标）+ 四页（
 5. 设置页：拖动灵敏度滑杆 → 平板滑动速度变化；快捷键表格 11 行；「打开配置文件夹」能打开
 6. 断开平板蓝牙再恢复 → 状态行「连接断开→重连」+ 气泡，几秒内自动恢复已连接
 7. 托盘右键「退出」→ 进程消失（任务管理器确认无 SimpleTouch.Agent.Ui 残留）
+
+## 5. 首轮人工验收反馈与修复（2026-11-17）
+
+**现象**：UI 端点「启动连接」无任何反应（诊断按钮正常）。
+
+**取证**：用户实例日志 `win-x64/logs/agent-ui-*.log` 只有诊断输出、零 AgentHost 行 → Start() 从未执行；
+「启动连接」按钮 CanExecute 绑定时（SelectedDevice 空）=false，此后设备列表填充不触发重查 → **按钮永久卡死禁用态**。
+手写 RelayCommand 的 CanExecuteChanged 是普通事件（只在绑定时刻评估）——WPF 标准做法是挂 `CommandManager.RequerySuggested`。
+
+**修复**：RelayCommand.CanExecuteChanged 改挂 CommandManager.RequerySuggested（自动重查）；
+DeviceDiagnostics 增加人读结论行（SPP 探针 0 为已知正常，以服务选择器命中为准，避免误读）。
+
+**自动化验证（UIA 跨隔离桌面成功）**：修复后「启动连接 enabled=True」→ UIA InvokePattern 点击 →
+状态「已连接: M2105K81AC」+ 完整握手/事件循环日志 → 全链路 ✓。测试实例已清理。
+**经验修正**：硬核经验 #15 的「真实窗口验证只能人工」应收窄为「截图/EnumWindows 受限，UIA 可编程驱动 WPF 标准控件」——
+后续 GUI 验收优先尝试 UIA（注意 PS5 读 UTF-8 无 BOM 脚本会损坏中文，需 utf-8-sig）。
