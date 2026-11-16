@@ -1,0 +1,132 @@
+package com.simpletouch.bluetooth
+
+import com.simpletouch.protocol.Capabilities
+import com.simpletouch.protocol.InputChannel
+import com.simpletouch.protocol.InputEvent
+import com.simpletouch.protocol.ProtocolConsts
+import com.simpletouch.protocol.StMessage
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+
+/**
+ * InputChannel 的第一个实现（方案文档 §4 耦合控制）：语义事件 → 协议消息 → RFCOMM。
+ *
+ * 线程模型：
+ * - [send] 非阻塞，可在手势回调/主线程直接调用；
+ * - PointerMove 只做增量累积（锁保护），由 16ms 定时循环合并发送（§4 数据流设计）；
+ * - 其余事件进内部队列，由单消费者协程按序发送（保证 down→up 等顺序）。
+ */
+class RfcommChannel(
+    private val server: RfcommServer,
+    override val capabilities: Capabilities,
+) : InputChannel {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val queue = Channel<InputEvent>(Channel.UNLIMITED)
+    private val lock = Any()
+    private var accX = 0f
+    private var accY = 0f
+
+    @Volatile
+    private var running = true
+
+    init {
+        // 16ms 移动合并循环
+        scope.launch {
+            while (isActive && running) {
+                delay(FLUSH_INTERVAL_MS)
+                val (dx, dy) = synchronized(lock) {
+                    val x = accX; val y = accY; accX = 0f; accY = 0f
+                    x to y
+                }
+                if (dx != 0f || dy != 0f) {
+                    val ok = runCatching { sendMove(dx, dy) }
+                    if (ok.isFailure) running = false
+                }
+            }
+        }
+        // 非移动事件单消费者
+        scope.launch {
+            while (isActive && running) {
+                val event = queue.receiveCatching().getOrNull() ?: break
+                val ok = runCatching { dispatch(event) }
+                if (ok.isFailure) running = false
+            }
+        }
+    }
+
+    override fun send(event: InputEvent) {
+        when (event) {
+            is InputEvent.PointerMove -> synchronized(lock) {
+                accX += event.dx
+                accY += event.dy
+            }
+            else -> queue.trySend(event)
+        }
+    }
+
+    private suspend fun dispatch(event: InputEvent) {
+        when (event) {
+            is InputEvent.PointerButton -> server.send(
+                StMessage.MouseButton(
+                    event.button,
+                    if (event.down) ProtocolConsts.PressAction.DOWN else ProtocolConsts.PressAction.UP,
+                )
+            )
+            is InputEvent.PointerScroll -> server.send(
+                StMessage.MouseScroll(
+                    event.dx.coerceIn(-127, 127).toByte(),
+                    event.dy.coerceIn(-127, 127).toByte(),
+                )
+            )
+            is InputEvent.KeyPress -> server.send(
+                StMessage.Key(
+                    event.hidUsage,
+                    if (event.down) ProtocolConsts.PressAction.DOWN else ProtocolConsts.PressAction.UP,
+                    event.mods,
+                )
+            )
+            is InputEvent.HotkeyTrigger -> server.send(StMessage.Hotkey(event.presetId))
+            is InputEvent.ConsumerAction -> server.send(StMessage.Hotkey(event.presetId))
+            is InputEvent.TextInput -> sendText(event.text)
+            is InputEvent.PointerMove -> Unit // 走合并路径，不会入队
+        }
+    }
+
+    /** 单帧 UTF-8 直注（≤4095B）；跨帧分帧器随 M3 文本流完善。 */
+    private suspend fun sendText(text: String) {
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        val chunks = bytes.toList().chunked(ProtocolConsts.MAX_PAYLOAD - 1)
+        chunks.forEachIndexed { index, chunk ->
+            val fin = index == chunks.lastIndex
+            server.send(StMessage.Text(fin, chunk.toByteArray()))
+        }
+    }
+
+    private fun sendMove(dx: Float, dy: Float) {
+        server.send(
+            StMessage.MouseMove(
+                clampToShort(dx).toShort(),
+                clampToShort(dy).toShort(),
+            )
+        )
+    }
+
+    fun close() {
+        running = false
+        queue.close()
+        scope.cancel()
+    }
+
+    private fun clampToShort(v: Float): Int = v.toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+
+    private companion object {
+        const val FLUSH_INTERVAL_MS = 16L
+    }
+}
