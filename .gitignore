@@ -1,0 +1,27 @@
+# ===== .NET =====
+bin/
+obj/
+out/
+artifacts/
+publish/
+*.user
+*.suo
+.vs/
+*.binlog
+*.dotcover
+
+# ===== Android / Gradle =====
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk.idsig
+
+# ===== 日志与临时文件 =====
+*.log
+Thumbs.db
+.DS_Store
