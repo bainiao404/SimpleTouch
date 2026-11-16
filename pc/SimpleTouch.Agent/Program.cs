@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using SimpleTouch.Core;
+using SimpleTouch.Core.Config;
 using SimpleTouch.Core.Protocol;
 using SimpleTouch.Platform.Windows;
 
@@ -83,26 +84,61 @@ try
         return 0;
     }
 
-    // 事件循环模式：触摸板/键盘事件实时注入（M1 主模式）
+    // 事件循环模式：触摸板/键盘事件实时注入（M1 主模式，M2 增加 HOTKEY/设置）
     var injector = new WindowsInputInjector();
+    var configDir = Path.Combine(AppContext.BaseDirectory, "config");
+    var hotkeyMap = HotkeyMap.LoadOrCreate(Path.Combine(configDir, "hotkeys.json"));
+    var settings = AgentSettings.LoadOrCreate(Path.Combine(configDir, "settings.json"));
+    Log.Info($"配置: hotkeys.json {hotkeyMap.Count} 项预设, moveScale={settings.MoveScale:0.##}");
+
     var exitTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     long moveCount = 0;
+    long lastButtonDownTicks = 0;
+    byte lastDownBtn = 0xFF;
+    // 点按 down/up 目标按住时长（M1 验收报告建议 40–60ms）；设 55 补偿 Thread.Sleep ~15ms 定时器粒度
+    const int TapGapMs = 55;
     session.Disconnected += _ => exitTcs.TrySetResult();
     session.MessageReceived += m =>
     {
         switch (m)
         {
             case MouseMoveMessage mv:
-                injector.MouseMove(mv.Dx, mv.Dy);
+                var dx = Math.Clamp((int)Math.Round(mv.Dx * settings.MoveScale), short.MinValue, short.MaxValue);
+                var dy = Math.Clamp((int)Math.Round(mv.Dy * settings.MoveScale), short.MinValue, short.MaxValue);
+                injector.MouseMove((short)dx, (short)dy);
                 Interlocked.Increment(ref moveCount);
                 break;
             case MouseButtonMessage b:
+                // 点按间隙兜底：手机端发送侧的 45ms 间隙会被 BT 链路合并（实测同毫秒到达），
+                // 注入前补足到 ~45ms 按住时长，避免极快 down/up 被应用吞掉（M1 已知问题 #2）
+                if (b.Action == ProtocolConsts.PressAction.Down)
+                {
+                    lastDownBtn = b.Button;
+                    lastButtonDownTicks = Environment.TickCount64;
+                }
+                else if (b.Button == lastDownBtn)
+                {
+                    var sinceDown = Environment.TickCount64 - lastButtonDownTicks;
+                    if (sinceDown < TapGapMs) Thread.Sleep((int)(TapGapMs - sinceDown));
+                }
                 injector.MouseButton(b.Button, b.Action == ProtocolConsts.PressAction.Down);
                 Log.Info($"BUTTON btn={b.Button} action={b.Action}");
                 break;
             case MouseScrollMessage s:
                 injector.MouseScroll(s.Dx, s.Dy);
                 Log.Info($"SCROLL dx={s.Dx} dy={s.Dy}");
+                break;
+            case HotkeyMessage h:
+                if (hotkeyMap.TryGetValue(h.PresetId, out var preset))
+                {
+                    Log.Info($"HOTKEY presetId={h.PresetId} → {preset.Name} (vk=0x{preset.Vk:X2} mods=0x{preset.Mods:X2})");
+                    // TapKey 内部阻塞 holdMs，放线程池避免拖慢接收线程（PONG/后续事件）
+                    _ = Task.Run(() => injector.TapKey(preset.Vk, preset.Mods, preset.HoldMs));
+                }
+                else
+                {
+                    Log.Warn($"HOTKEY 未知 presetId={h.PresetId}，已忽略（兼容规则）");
+                }
                 break;
             case ByeMessage:
                 exitTcs.TrySetResult();

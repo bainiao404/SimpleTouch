@@ -121,6 +121,23 @@ public sealed class WindowsInputInjector : IInputInjector
         SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<Input>());
     }
 
+    /// <summary>组合键整段注入：修饰键→VK 按下，保持 holdMs，反序抬起（HOTKEY 媒体键/快捷键路径）。</summary>
+    public void TapKey(ushort vk, byte mods, int holdMs)
+    {
+        var modVks = ModsToVks(mods).ToArray();
+        var down = new List<Input>(modVks.Length + 1);
+        foreach (var m in modVks) down.Add(VkInput(m, down: true));
+        down.Add(VkInput(vk, down: true));
+        SendInput((uint)down.Count, down.ToArray(), Marshal.SizeOf<Input>());
+
+        // 媒体键消费太快部分应用不识别，保持一小段按下时长（可经 hotkeys.json holdMs 调整）
+        Thread.Sleep(Math.Clamp(holdMs, 10, 200));
+
+        var up = new List<Input>(modVks.Length + 1) { VkInput(vk, down: false) };
+        foreach (var m in modVks) up.Add(VkInput(m, down: false));
+        SendInput((uint)up.Count, up.ToArray(), Marshal.SizeOf<Input>());
+    }
+
     // ---- 内部 ----
 
     private static Input MouseWheelInput(uint flag, int delta) =>
@@ -134,6 +151,13 @@ public sealed class WindowsInputInjector : IInputInjector
         {
             Type = InputKeyboard,
             U = new InputUnion { Keyboard = new KeyboardInput { Scan = ch, Flags = KeyEventfUnicode | (up ? KeyEventfKeyUp : 0) } },
+        };
+
+    private static Input VkInput(ushort vk, bool down) =>
+        new()
+        {
+            Type = InputKeyboard,
+            U = new InputUnion { Keyboard = new KeyboardInput { Vk = vk, Flags = down ? 0 : KeyEventfKeyUp } },
         };
 
     private static void SendVk(ushort vk, bool down) =>
