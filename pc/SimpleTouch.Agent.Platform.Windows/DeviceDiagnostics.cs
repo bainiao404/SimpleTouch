@@ -54,5 +54,11 @@ public static class DeviceDiagnostics
                 RfcommDeviceService.GetDeviceSelector(RfcommServiceId.FromUuid(uuid))).AsTask(ct);
             Log.Info($"探针 {label}: 命中 {hit.Count}");
         }
+
+        // M4.5：给出人读结论（SPP 探针恒 0 是已知行为——GetRfcommServicesAsync 路径失效，见 任务继承 §5-1）
+        var selfHit = serviceInfos.Count > 0;
+        Log.Info(selfHit
+            ? "结论: SimpleTouch 服务可被发现（以「服务选择器命中」为准；SPP 探针 0 属已知正常），可直接启动连接"
+            : "结论: 未发现 SimpleTouch 服务——请确认手机端 App 处于监听状态，且配对发生在监听期间（必要时重新配对）");
     }
 }

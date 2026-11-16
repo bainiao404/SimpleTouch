@@ -38,7 +38,6 @@ public sealed class RelayCommand : ICommand
 {
     private readonly Action _execute;
     private readonly Func<bool>? _canExecute;
-    public event EventHandler? CanExecuteChanged;
 
     public RelayCommand(Action execute, Func<bool>? canExecute = null)
     {
@@ -46,9 +45,18 @@ public sealed class RelayCommand : ICommand
         _canExecute = canExecute;
     }
 
+    /// <summary>
+    /// 经 CommandManager 自动重查 CanExecute（焦点/输入变化触发）。
+    /// M4.5 复盘：手写普通事件只在绑定时刻评估一次，「启动连接」按钮因此卡死禁用态。
+    /// </summary>
+    public event EventHandler? CanExecuteChanged
+    {
+        add { CommandManager.RequerySuggested += value; }
+        remove { CommandManager.RequerySuggested -= value; }
+    }
+
     public bool CanExecute(object? parameter) => _canExecute?.Invoke() ?? true;
     public void Execute(object? parameter) => _execute();
-    public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
 }
 
 /// <summary>设置页只读快捷键行。</summary>
@@ -196,12 +204,7 @@ public sealed class MainViewModel : ObservableObject
     {
         _state = state;
         StatusText = text;
-        Raise(nameof(IsBusy));
-        StartCommand.RaiseCanExecuteChanged();
-        StopCommand.RaiseCanExecuteChanged();
-        RefreshDevicesCommand.RaiseCanExecuteChanged();
-        DiagnoseCommand.RaiseCanExecuteChanged();
-        RepairCommand.RaiseCanExecuteChanged();
+        Raise(nameof(IsBusy)); // CanExecute 经 CommandManager 自动重查
         // 托盘气泡仅在状态转移时提示，退避循环内的重复状态不刷屏
         if (state == _lastNotifyState) return;
         switch (state)
