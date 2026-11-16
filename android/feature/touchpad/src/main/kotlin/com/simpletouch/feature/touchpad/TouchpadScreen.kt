@@ -143,12 +143,12 @@ private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.ges
                 val sign = if (config.naturalScroll) -1 else 1
                 while (scrollAccum <= -config.scrollThreshold) {
                     channel.send(InputEvent.PointerScroll(0, sign)) // 上滑 → sign 正负号方向（协议正 dy=向上滚）
-                    scrollAccum -= config.scrollThreshold
+                    scrollAccum += config.scrollThreshold // 向 0 回收（M4 复盘修复：原 -= 使 accum 负向发散=死循环）
                     scrolling = true
                 }
                 while (scrollAccum >= config.scrollThreshold) {
                     channel.send(InputEvent.PointerScroll(0, -sign))
-                    scrollAccum += config.scrollThreshold
+                    scrollAccum -= config.scrollThreshold // 向 0 回收（M4 复盘修复：原 += 使 accum 正向发散=死循环）
                     scrolling = true
                 }
             }
