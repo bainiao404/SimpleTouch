@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using SimpleTouch.Core;
+using SimpleTouch.Core.Config;
 using SimpleTouch.Core.Protocol;
 using SimpleTouch.Platform.Windows;
 
@@ -83,8 +84,13 @@ try
         return 0;
     }
 
-    // 事件循环模式：触摸板/键盘事件实时注入（M1 主模式）
+    // 事件循环模式：触摸板/键盘事件实时注入（M1 主模式，M2 增加 HOTKEY/设置）
     var injector = new WindowsInputInjector();
+    var configDir = Path.Combine(AppContext.BaseDirectory, "config");
+    var hotkeyMap = HotkeyMap.LoadOrCreate(Path.Combine(configDir, "hotkeys.json"));
+    var settings = AgentSettings.LoadOrCreate(Path.Combine(configDir, "settings.json"));
+    Log.Info($"配置: hotkeys.json {hotkeyMap.Count} 项预设, moveScale={settings.MoveScale:0.##}");
+
     var exitTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     long moveCount = 0;
     session.Disconnected += _ => exitTcs.TrySetResult();
@@ -93,7 +99,9 @@ try
         switch (m)
         {
             case MouseMoveMessage mv:
-                injector.MouseMove(mv.Dx, mv.Dy);
+                var dx = Math.Clamp((int)Math.Round(mv.Dx * settings.MoveScale), short.MinValue, short.MaxValue);
+                var dy = Math.Clamp((int)Math.Round(mv.Dy * settings.MoveScale), short.MinValue, short.MaxValue);
+                injector.MouseMove((short)dx, (short)dy);
                 Interlocked.Increment(ref moveCount);
                 break;
             case MouseButtonMessage b:
@@ -103,6 +111,18 @@ try
             case MouseScrollMessage s:
                 injector.MouseScroll(s.Dx, s.Dy);
                 Log.Info($"SCROLL dx={s.Dx} dy={s.Dy}");
+                break;
+            case HotkeyMessage h:
+                if (hotkeyMap.TryGetValue(h.PresetId, out var preset))
+                {
+                    Log.Info($"HOTKEY presetId={h.PresetId} → {preset.Name} (vk=0x{preset.Vk:X2} mods=0x{preset.Mods:X2})");
+                    // TapKey 内部阻塞 holdMs，放线程池避免拖慢接收线程（PONG/后续事件）
+                    _ = Task.Run(() => injector.TapKey(preset.Vk, preset.Mods, preset.HoldMs));
+                }
+                else
+                {
+                    Log.Warn($"HOTKEY 未知 presetId={h.PresetId}，已忽略（兼容规则）");
+                }
                 break;
             case ByeMessage:
                 exitTcs.TrySetResult();

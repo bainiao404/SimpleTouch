@@ -11,4 +11,7 @@ public interface IInputInjector
     void MouseScroll(int dx, int dy); // dy 正值=向上滚动
     void KeyPress(byte hidUsage, bool down, byte mods);
     void Text(string text);           // Unicode 直注（含代理对字符）
+
+    /// <summary>组合键整段注入（HOTKEY 映射用）：修饰键+VK 按下 → holdMs → 按相反序抬起。调用方须在线程池执行（内部阻塞）。</summary>
+    void TapKey(ushort vk, byte mods, int holdMs);
 }

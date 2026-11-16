@@ -33,6 +33,10 @@ class RfcommChannel(
     private var accX = 0f
     private var accY = 0f
 
+    /** 上一次派发的按键 down（用于识别快速 down→up 点按对，M1 已知问题 #2）。仅单消费者协程访问。 */
+    private var lastDownButton = -1
+    private var lastDownDispatchNanos = 0L
+
     @Volatile
     private var running = true
 
@@ -73,12 +77,25 @@ class RfcommChannel(
 
     private suspend fun dispatch(event: InputEvent) {
         when (event) {
-            is InputEvent.PointerButton -> server.send(
-                StMessage.MouseButton(
-                    event.button,
-                    if (event.down) ProtocolConsts.PressAction.DOWN else ProtocolConsts.PressAction.UP,
+            is InputEvent.PointerButton -> {
+                val now = System.nanoTime()
+                // 快速 down→up 点按对（<150ms）在中间补 45ms 间隙，避免同毫秒 down/up 被应用吞掉
+                if (!event.down && event.button == lastDownButton &&
+                    now - lastDownDispatchNanos < TAP_PAIR_NANOS
+                ) {
+                    delay(TAP_GAP_MS)
+                }
+                if (event.down) {
+                    lastDownButton = event.button
+                    lastDownDispatchNanos = System.nanoTime()
+                }
+                server.send(
+                    StMessage.MouseButton(
+                        event.button,
+                        if (event.down) ProtocolConsts.PressAction.DOWN else ProtocolConsts.PressAction.UP,
+                    )
                 )
-            )
+            }
             is InputEvent.PointerScroll -> server.send(
                 StMessage.MouseScroll(
                     event.dx.coerceIn(-127, 127).toByte(),
@@ -128,5 +145,11 @@ class RfcommChannel(
 
     private companion object {
         const val FLUSH_INTERVAL_MS = 16L
+
+        /** 点按 down/up 间隙（M1 验收报告建议 40–60ms） */
+        const val TAP_GAP_MS = 45L
+
+        /** 判定为同一次点按的 down→up 间隔上限（拖拽 down…up 间隔远大于此值，不插间隙） */
+        const val TAP_PAIR_NANOS = 150_000_000L
     }
 }

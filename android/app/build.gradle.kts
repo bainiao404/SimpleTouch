@@ -42,4 +42,5 @@ dependencies {
     implementation(project(":core:protocol"))
     implementation(project(":core:bluetooth"))
     implementation(project(":feature:touchpad"))
+    implementation(project(":feature:hotkeys"))
 }

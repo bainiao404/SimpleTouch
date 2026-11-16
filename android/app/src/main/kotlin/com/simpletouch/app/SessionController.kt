@@ -30,6 +30,9 @@ class SessionController(context: Context) {
     /** 已建立会话时可用的事件通道（触摸板等特征层的唯一发送入口）。 */
     val channel = mutableStateOf<RfcommChannel?>(null)
 
+    /** PC 端能力（HELLO.caps）——快捷键面板按此门控；未握手时全 false=按钮禁用。 */
+    val peerCaps = mutableStateOf(Capabilities(textInject = false, clipboard = false, macros = false, consumer = false))
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
     private val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
@@ -52,6 +55,7 @@ class SessionController(context: Context) {
         }
         status.value = "监听中…等待 PC 连接"
         listening.value = true
+        peerCaps.value = Capabilities(textInject = false, clipboard = false, macros = false, consumer = false)
 
         var s: RfcommServer? = null
         s = RfcommServer(adapter, object : RfcommServerListener {
@@ -67,7 +71,10 @@ class SessionController(context: Context) {
 
             override fun onFrame(seq: Int, message: StMessage) {
                 when (message) {
-                    is StMessage.Hello -> log("HELLO: ${message.name} ver=${message.version} caps=0x${Integer.toHexString(message.caps)}")
+                    is StMessage.Hello -> {
+                        log("HELLO: ${message.name} ver=${message.version} caps=0x${Integer.toHexString(message.caps)}")
+                        mainHandler.post { peerCaps.value = Capabilities.fromMask(message.caps) }
+                    }
                     is StMessage.Ready -> log("PC READY（注入器就绪）")
                     is StMessage.Ping -> {
                         // 协议 §5：PING 自动回显 PONG（PC 端以此测 RTT）
