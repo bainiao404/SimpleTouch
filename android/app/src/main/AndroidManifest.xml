@@ -11,6 +11,13 @@
     <!-- API 31+：运行时权限，MainActivity 里动态申请 -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
+    <!-- M4 前台服务：connectedDevice 类型保活 RFCOMM 监听（API 30 适用；34+ 需类型化权限） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 电池优化白名单引导（侧载应用不受应用商店政策限制） -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <application
         android:name=".SimpleTouchApp"
         android:label="SimpleTouch"
@@ -25,6 +32,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".ConnectionService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
     </application>
 
 </manifest>

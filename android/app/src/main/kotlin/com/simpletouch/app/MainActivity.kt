@@ -1,12 +1,17 @@
 package com.simpletouch.app
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -32,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import com.simpletouch.feature.hotkeys.HotkeyPanelScreen
@@ -45,8 +51,12 @@ class MainActivity : ComponentActivity() {
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) session.start() else session.onPermissionDenied()
+            if (granted) startListening() else session.onPermissionDenied()
         }
+
+    // API 33+ 通知运行时权限：仅影响通知可见性，拒绝不阻塞监听流程（Pad 5 Pro = API 30 不需要）
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -89,6 +99,10 @@ class MainActivity : ComponentActivity() {
                     else -> ConnectionScreen(
                         session = session,
                         onStart = { maybeStart() },
+                        onStop = {
+                            session.stop()
+                            ConnectionService.stop(this@MainActivity)
+                        },
                         touchpadEnabled = channel != null,
                         textEnabled = channel != null,
                         hotkeysEnabled = channel != null,
@@ -108,13 +122,24 @@ class MainActivity : ComponentActivity() {
         cm.setPrimaryClip(ClipData.newPlainText("SimpleTouch", text))
     }
 
+    private fun startListening() {
+        session.start()
+        // M4：前台服务保活——监听转入后台/息屏后仍持续（配合电池优化白名单）
+        ConnectionService.start(this)
+    }
+
     private fun maybeStart() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         if (Build.VERSION.SDK_INT >= 31 &&
             ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
         ) {
             permissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
         } else {
-            session.start()
+            startListening()
         }
     }
 
@@ -128,6 +153,7 @@ class MainActivity : ComponentActivity() {
 private fun ConnectionScreen(
     session: SessionController,
     onStart: () -> Unit,
+    onStop: () -> Unit,
     touchpadEnabled: Boolean,
     textEnabled: Boolean,
     hotkeysEnabled: Boolean,
@@ -149,13 +175,15 @@ private fun ConnectionScreen(
         Text("SimpleTouch", style = MaterialTheme.typography.headlineMedium)
         Text(status.value, style = MaterialTheme.typography.bodyMedium)
 
+        // M4：启动/停止切换——监听常驻（断线自动等重连），用户可主动停止
         Button(
-            onClick = onStart,
-            enabled = !listening.value,
+            onClick = { if (listening.value) onStop() else onStart() },
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text(if (listening.value) "监听中…" else "启动监听")
+            Text(if (listening.value) "停止监听" else "启动监听")
         }
+
+        BatteryOptimizationHint()
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -205,10 +233,40 @@ private fun ConnectionScreen(
     }
 }
 
+/**
+ * M4 后台保活引导：未加白名单时显示——电池优化白名单一键申请 + MIUI 手动权限提示。
+ * 息屏/后台被杀是 M0 已知断连主因（执行文档 §10 风险表「后台被杀」行）。
+ */
+@Composable
+private fun BatteryOptimizationHint() {
+    val context = LocalContext.current
+    val powerManager = remember { context.getSystemService(Context.POWER_SERVICE) as PowerManager }
+    var whitelisted = remember { powerManager.isIgnoringBatteryOptimizations(context.packageName) }
+    if (whitelisted) return
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("后台保活提示", style = MaterialTheme.typography.titleSmall)
+        Text(
+            "为避免息屏/后台断连：① 点下方按钮加入电池优化白名单；" +
+                "② MIUI 设备请在「系统设置→应用管理→SimpleTouch」中开启「自启动」「后台弹出界面」",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Button(onClick = {
+            @SuppressLint("BatteryLife")
+            val intent = Intent(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Uri.parse("package:${context.packageName}"),
+            )
+            context.startActivity(intent)
+            whitelisted = true // 乐观置已处理；用户若拒绝，下次冷启动会再次提示
+        }) {
+            Text("加入电池优化白名单")
+        }
+    }
+}
+
 /** M2 设置页：灵敏度 / 滚动方向 / 滚动阈值，改动即时生效并由 SettingsStore 落盘 JSON。 */
 @Composable
-private fun SettingsScreen(store: SettingsStore, onBack: () -> Unit) {
-    val config = store.config
+private fun SettingsScreen(store: SettingsStore, onBack: () -> Unit) {    val config = store.config
 
     Column(
         modifier = Modifier
