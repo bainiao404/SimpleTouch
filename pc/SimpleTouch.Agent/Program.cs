@@ -152,6 +152,11 @@ try
                 injector.MouseScroll(s.Dx, s.Dy);
                 Log.Info($"SCROLL dx={s.Dx} dy={s.Dy}");
                 break;
+            case KeyMessage k:
+                injector.KeyPress(k.Code, k.Action == ProtocolConsts.PressAction.Down, k.Mods);
+                if (k.Action == ProtocolConsts.PressAction.Down)
+                    Log.Info($"KEY code=0x{k.Code:X2} mods=0x{k.Mods:X2}");
+                break;
             case TextMessage t:
                 pendingText.AddRange(t.Data);
                 if (t.Fin)

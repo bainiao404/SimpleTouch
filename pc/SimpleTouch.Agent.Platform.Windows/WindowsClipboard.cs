@@ -32,8 +32,6 @@ public sealed class WindowsClipboard : IClipboard, IDisposable
     private static extern IntPtr GlobalLock(IntPtr handle);
     [DllImport("kernel32.dll")]
     private static extern bool GlobalUnlock(IntPtr handle);
-    [DllImport("kernel32.dll")]
-    private static extern nuint GlobalSize(IntPtr handle, out nuint size);
 
     public event Action<string>? TextChanged;
 
@@ -106,10 +104,15 @@ public sealed class WindowsClipboard : IClipboard, IDisposable
             if (ptr == IntPtr.Zero) return null;
             try
             {
-                GlobalSize(handle, out var size);
-                var bytes = new byte[size];
-                Marshal.Copy(ptr, bytes, 0, (int)size);
-                return System.Text.Encoding.Unicode.GetString(bytes).TrimEnd('\0');
+                // 剪贴板文本按约定以 '\0' 结尾；GlobalSize 对其他进程分配的句柄不可靠，
+                // 直接扫描终止符（上限 1M 字符防失控）
+                const int MaxChars = 1 << 20;
+                var len = 0;
+                while (len < MaxChars && Marshal.ReadInt16(ptr, len * 2) != 0) len++;
+                if (len == 0) return string.Empty;
+                var chars = new char[len];
+                Marshal.Copy(ptr, chars, 0, len);
+                return new string(chars);
             }
             finally
             {
