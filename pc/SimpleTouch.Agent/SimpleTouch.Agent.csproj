@@ -8,8 +8,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RootNamespace>SimpleTouch.Agent</RootNamespace>
-    <!-- M4 起双端版本号一致（Android versionName 同步）；协议版本见 ProtocolConsts（未变更=1） -->
-    <Version>0.4.1</Version>
+    <!-- M4.5 起双端版本号一致（Android versionName 同步）；协议版本见 ProtocolConsts（未变更=1） -->
+    <Version>0.5.0</Version>
     <!-- CET 闪退规避（方案文档 §6 兼容性基线）：21H2 类系统启动即 FailFast 的问题，
          出厂必须保留此项，发布检查清单核验 -->
     <CETCompat>false</CETCompat>
@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SimpleTouch.Agent.Core\SimpleTouch.Agent.Core.csproj" />
+    <ProjectReference Include="..\SimpleTouch.Agent.Host\SimpleTouch.Agent.Host.csproj" />
     <ProjectReference Include="..\SimpleTouch.Agent.Platform.Windows\SimpleTouch.Agent.Platform.Windows.csproj" />
   </ItemGroup>
 

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using SimpleTouch.Core;
 using SimpleTouch.Core.Config;
 using SimpleTouch.Core.Protocol;
+using SimpleTouch.Host;
 using SimpleTouch.Platform.Windows;
 
 if (!OperatingSystem.IsWindows())
@@ -32,10 +33,11 @@ if (argsList.Contains("--diag"))
     return 0;
 }
 
-var deviceName = argsList.FirstOrDefault(a => !a.StartsWith('-')) ?? "Xiaomi Pad 5 Pro";
+// 设备名优先级：命令行参数 > settings.json 记忆值 > 出厂默认
+var savedDevice = AgentSettings.LoadOrCreate(Path.Combine(AppContext.BaseDirectory, "config", "settings.json")).DeviceName;
+var deviceName = argsList.FirstOrDefault(a => !a.StartsWith('-'))
+    ?? (string.IsNullOrWhiteSpace(savedDevice) ? "Xiaomi Pad 5 Pro" : savedDevice);
 Log.Info($"SimpleTouch Agent 启动（协议 v{ProtocolConsts.ProtocolVersion}），目标设备: {deviceName}");
-// 剪贴板防回环标记（跨会话保留；RunAgentLoopAsync 与 RunEventLoopAsync 共用）
-string? lastClipboardFromPhone = null;
 
 try
 {
@@ -59,9 +61,7 @@ try
         await using var pingSession = new ProtocolSession(pingTransport);
         await pingTransport.StartReceivingAsync();
 
-        const int allCaps = ProtocolConsts.CapsBits.TextInject | ProtocolConsts.CapsBits.Clipboard
-                          | ProtocolConsts.CapsBits.Macros | ProtocolConsts.CapsBits.Consumer;
-        if (!await pingSession.HandshakeAsync("SimpleTouch.PC", allCaps, sendReady: true, cts.Token))
+        if (!await pingSession.HandshakeAsync("SimpleTouch.PC", AgentHost.HandshakeCaps, sendReady: true, cts.Token))
         {
             Log.Error("握手失败（版本不兼容或 5s 内未收到对端 HELLO）");
             return 1;
@@ -85,8 +85,10 @@ try
         return 0;
     }
 
-    // M4 主模式：事件循环 + 断线退避重连（M0 已知限制的正式解，手机端配套自动重新监听）
-    await RunAgentLoopAsync(deviceName, cts.Token);
+    // M4.5 主模式：内核已解耦至 SimpleTouch.Agent.Host（与 WPF UI 共用同一 AgentHost）
+    await using var host = new AgentHost(deviceName);
+    host.RememberDevice(deviceName);
+    await host.RunAsync(cts.Token);
     return 0;
 }
 catch (OperationCanceledException)
@@ -99,204 +101,6 @@ catch (Exception ex)
     Log.Error(ex.ToString());
     return 1;
 }
-
-// ===== 事件循环模式：断线退避重连 =====
-async Task RunAgentLoopAsync(string targetDevice, CancellationToken ct)
-{
-    // 跨会话复用：注入器/配置/剪贴板只建一次，退避计数与会话级状态每次连接重置
-    var injector = new WindowsInputInjector();
-    var configDir = Path.Combine(AppContext.BaseDirectory, "config");
-    var hotkeyMap = HotkeyMap.LoadOrCreate(Path.Combine(configDir, "hotkeys.json"));
-    var settings = AgentSettings.LoadOrCreate(Path.Combine(configDir, "settings.json"));
-    Log.Info($"配置: hotkeys.json {hotkeyMap.Count} 项预设, moveScale={settings.MoveScale:0.##}");
-
-    // M3 剪贴板：轮询监听 + 双向同步（防回环：手机刚推来的内容不回推）。
-    // 推送目标用 currentSession 间接引用——断线期间 PC 剪贴板变更静默跳过，重连后恢复推送
-    var clipboard = new WindowsClipboard();
-    clipboard.StartMonitoring();
-    ProtocolSession? currentSession = null;
-    clipboard.TextChanged += text =>
-    {
-        var session = currentSession;
-        if (session is null) return;
-        if (text == lastClipboardFromPhone)
-        {
-            Log.Info("剪贴板变更与手机端推送内容相同，跳过回推（防回环）");
-            return;
-        }
-        Log.Info($"PC 剪贴板变更 → 推送 CLIPBOARD_SET ({text.Length} 字符)");
-        var frames = TextFrameSplitter.Split(text);
-        _ = Task.Run(async () =>
-        {
-            for (var i = 0; i < frames.Count; i++)
-                await session.SendAsync(new ClipboardSetMessage(i == frames.Count - 1, frames[i]), CancellationToken.None);
-        });
-    };
-
-    var attempt = 0; // 失败次数；握手成功归零（1s→2s→4s→8s→15s→30s 封顶）
-    while (!ct.IsCancellationRequested)
-    {
-        try
-        {
-            if (attempt > 0)
-                Log.Info($"第 {attempt + 1} 次尝试连接 {targetDevice}…");
-
-            await using var transport = await WinRfcommTransport.ConnectAsync(targetDevice, ProtocolConsts.RfcommServiceUuid, ct);
-            await using var session = new ProtocolSession(transport);
-            await transport.StartReceivingAsync();
-            session.Disconnected += ex => Log.Warn($"连接断开: {ex?.Message ?? "对端正常关闭"}");
-
-            const int caps = ProtocolConsts.CapsBits.TextInject | ProtocolConsts.CapsBits.Clipboard
-                           | ProtocolConsts.CapsBits.Macros | ProtocolConsts.CapsBits.Consumer;
-            if (!await session.HandshakeAsync("SimpleTouch.PC", caps, sendReady: true, ct))
-                throw new InvalidOperationException("握手失败（版本不兼容或 5s 内未收到对端 HELLO）");
-
-            Log.Info($"握手完成: peer={session.PeerName} ver={session.PeerVersion} caps=0x{session.PeerCaps:X}" +
-                     (attempt > 0 ? "（断线重连成功）" : ""));
-            attempt = 0;
-            currentSession = session;
-            await RunEventLoopAsync(session, injector, hotkeyMap, settings, clipboard, ct);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw; // 用户 Ctrl+C：直接退出重连循环
-        }
-        catch (Exception ex)
-        {
-            attempt++;
-            // SocketException 等异常 Message 可能为空串，补类型名保证日志可读
-            var reason = string.IsNullOrWhiteSpace(ex.Message) ? ex.GetType().Name : ex.Message;
-            Log.Error($"连接失败: {reason}");
-            var delayMs = BackoffDelayMs(attempt);
-            Log.Info($"{delayMs / 1000.0:0.#}s 后自动重试（Ctrl+C 退出）");
-            await Task.Delay(delayMs, ct);
-        }
-        finally
-        {
-            currentSession = null;
-        }
-    }
-}
-
-// 单个会话：消息处理 + 吞吐统计，直到断开/BYE/取消才返回
-async Task RunEventLoopAsync(
-    ProtocolSession session,
-    WindowsInputInjector injector,
-    Dictionary<ushort, HotkeyPresetDef> hotkeyMap,
-    AgentSettings settings,
-    WindowsClipboard clipboard,
-    CancellationToken ct)
-{
-    // M3 TEXT/CLIPBOARD_SET 分帧重组缓冲（仅接收线程访问；随会话重建，防止跨会话污染）
-    var pendingText = new List<byte>();
-    var pendingClipboard = new List<byte>();
-
-    var exitTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    long moveCount = 0;
-    long lastButtonDownTicks = 0;
-    byte lastDownBtn = 0xFF;
-    // 点按 down/up 目标按住时长（M1 验收报告建议 40–60ms）；设 55 补偿 Thread.Sleep ~15ms 定时器粒度
-    const int TapGapMs = 55;
-    session.Disconnected += _ => exitTcs.TrySetResult();
-    session.MessageReceived += m =>
-    {
-        switch (m)
-        {
-            case MouseMoveMessage mv:
-                var dx = Math.Clamp((int)Math.Round(mv.Dx * settings.MoveScale), short.MinValue, short.MaxValue);
-                var dy = Math.Clamp((int)Math.Round(mv.Dy * settings.MoveScale), short.MinValue, short.MaxValue);
-                injector.MouseMove((short)dx, (short)dy);
-                Interlocked.Increment(ref moveCount);
-                break;
-            case MouseButtonMessage b:
-                // 点按间隙兜底：手机端发送侧的 45ms 间隙会被 BT 链路合并（实测同毫秒到达），
-                // 注入前补足到 ~45ms 按住时长，避免极快 down/up 被应用吞掉（M1 已知问题 #2）
-                if (b.Action == ProtocolConsts.PressAction.Down)
-                {
-                    lastDownBtn = b.Button;
-                    lastButtonDownTicks = Environment.TickCount64;
-                }
-                else if (b.Button == lastDownBtn)
-                {
-                    var sinceDown = Environment.TickCount64 - lastButtonDownTicks;
-                    if (sinceDown < TapGapMs) Thread.Sleep((int)(TapGapMs - sinceDown));
-                }
-                injector.MouseButton(b.Button, b.Action == ProtocolConsts.PressAction.Down);
-                Log.Info($"BUTTON btn={b.Button} action={b.Action}");
-                break;
-            case MouseScrollMessage s:
-                injector.MouseScroll(s.Dx, s.Dy);
-                Log.Info($"SCROLL dx={s.Dx} dy={s.Dy}");
-                break;
-            case KeyMessage k:
-                injector.KeyPress(k.Code, k.Action == ProtocolConsts.PressAction.Down, k.Mods);
-                if (k.Action == ProtocolConsts.PressAction.Down)
-                    Log.Info($"KEY code=0x{k.Code:X2} mods=0x{k.Mods:X2}");
-                break;
-            case TextMessage t:
-                pendingText.AddRange(t.Data);
-                if (t.Fin)
-                {
-                    var text = System.Text.Encoding.UTF8.GetString(pendingText.ToArray());
-                    pendingText.Clear();
-                    Log.Info($"TEXT 直注 {text.Length} 字符");
-                    // 多字符注入耗时（逐码元 SendInput），放线程池避免拖慢接收线程
-                    _ = Task.Run(() => injector.Text(text));
-                }
-                break;
-            case ClipboardSetMessage c:
-                pendingClipboard.AddRange(c.Data);
-                if (c.Fin)
-                {
-                    var clipText = System.Text.Encoding.UTF8.GetString(pendingClipboard.ToArray());
-                    pendingClipboard.Clear();
-                    lastClipboardFromPhone = clipText;
-                    Log.Info($"CLIPBOARD_SET ← 手机 ({clipText.Length} 字符) → 写入 PC 剪贴板");
-                    _ = Task.Run(() => clipboard.SetText(clipText));
-                }
-                break;
-            case HotkeyMessage h:
-                if (hotkeyMap.TryGetValue(h.PresetId, out var preset))
-                {
-                    Log.Info($"HOTKEY presetId={h.PresetId} → {preset.Name} (vk=0x{preset.Vk:X2} mods=0x{preset.Mods:X2})");
-                    // TapKey 内部阻塞 holdMs，放线程池避免拖慢接收线程（PONG/后续事件）
-                    _ = Task.Run(() => injector.TapKey(preset.Vk, preset.Mods, preset.HoldMs));
-                }
-                else
-                {
-                    Log.Warn($"HOTKEY 未知 presetId={h.PresetId}，已忽略（兼容规则）");
-                }
-                break;
-            case ByeMessage:
-                exitTcs.TrySetResult();
-                break;
-        }
-    };
-    Log.Info("事件循环已启动——触摸板/快捷键/文本/剪贴板就绪（断开后自动重连，Ctrl+C 退出）");
-    _ = Task.Run(async () =>
-    {
-        while (!ct.IsCancellationRequested && !exitTcs.Task.IsCompleted)
-        {
-            try { await Task.Delay(5000, ct); } catch (OperationCanceledException) { break; }
-            var n = Interlocked.Exchange(ref moveCount, 0);
-            Log.Info($"吞吐: {n / 5.0:F0} move/s");
-        }
-    });
-    await exitTcs.Task.WaitAsync(ct);
-    Log.Info("会话结束");
-    try { await session.SendAsync(new ByeMessage(ProtocolConsts.ByeReason.Normal), CancellationToken.None); } catch { /* 传输已断开 */ }
-}
-
-/// <summary>断线重连退避：1s→2s→4s→8s→15s，之后 30s 封顶。</summary>
-static int BackoffDelayMs(int failedAttempt) => failedAttempt switch
-{
-    1 => 1_000,
-    2 => 2_000,
-    3 => 4_000,
-    4 => 8_000,
-    5 => 15_000,
-    _ => 30_000,
-};
 
 static double Percentile(List<double> sorted, int p) =>
     sorted[Math.Min(sorted.Count - 1, (int)Math.Ceiling(sorted.Count * p / 100.0) - 1)];

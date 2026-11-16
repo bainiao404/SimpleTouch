@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>SimpleTouch.Agent.Ui</RootNamespace>
+    <!-- M4.5 起双端版本号一致（Android versionName 同步） -->
+    <Version>0.5.0</Version>
+    <!-- CET 闪退规避（方案文档 §6 兼容性基线）：出厂必须保留，发布检查清单核验 -->
+    <CETCompat>false</CETCompat>
+    <!-- WPF 主框架 + WinForms NotifyIcon（托盘图标），零外部 NuGet 包 -->
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SimpleTouch.Agent.Core\SimpleTouch.Agent.Core.csproj" />
+    <ProjectReference Include="..\SimpleTouch.Agent.Host\SimpleTouch.Agent.Host.csproj" />
+    <ProjectReference Include="..\SimpleTouch.Agent.Platform.Windows\SimpleTouch.Agent.Platform.Windows.csproj" />
+  </ItemGroup>
+
+</Project>
