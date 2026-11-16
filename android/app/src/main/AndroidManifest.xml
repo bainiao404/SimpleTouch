@@ -12,6 +12,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <application
+        android:name=".SimpleTouchApp"
         android:label="SimpleTouch"
         android:icon="@drawable/ic_launcher"
         android:theme="@style/Theme.SimpleTouch">

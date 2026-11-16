@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import com.simpletouch.bluetooth.RfcommChannel
 import com.simpletouch.bluetooth.RfcommServer
 import com.simpletouch.bluetooth.RfcommServerListener
+import com.simpletouch.feature.keyboard.KeyboardChannelHolder
 import com.simpletouch.protocol.Capabilities
 import com.simpletouch.protocol.ProtocolConsts
 import com.simpletouch.protocol.StMessage
@@ -33,10 +34,16 @@ class SessionController(context: Context) {
     /** PC 端能力（HELLO.caps）——快捷键面板按此门控；未握手时全 false=按钮禁用。 */
     val peerCaps = mutableStateOf(Capabilities(textInject = false, clipboard = false, macros = false, consumer = false))
 
+    /** PC → 手机方向推送的最新剪贴板内容（CLIPBOARD_SET 按帧累积到 FIN）。 */
+    val latestPcClipboard = mutableStateOf<String?>(null)
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
     private val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
     private var server: RfcommServer? = null
+
+    /** CLIPBOARD_SET 分帧累积缓冲（仅读循环线程访问，FIN 时整体解码）。 */
+    private val clipboardBuffer = java.io.ByteArrayOutputStream()
 
     private fun log(message: String) = mainHandler.post {
         logs.add("${timeFormat.format(Date())}  $message")
@@ -65,7 +72,11 @@ class SessionController(context: Context) {
                 val srv = s
                 if (srv != null) {
                     val ch = RfcommChannel(srv, Capabilities(textInject = false, clipboard = false, macros = false, consumer = false))
-                    mainHandler.post { channel.value = ch }
+                    mainHandler.post {
+                        channel.value = ch
+                        // IME 服务与 MainActivity 同进程，经 holder 共享通道
+                        KeyboardChannelHolder.channel = ch
+                    }
                 }
             }
 
@@ -73,7 +84,11 @@ class SessionController(context: Context) {
                 when (message) {
                     is StMessage.Hello -> {
                         log("HELLO: ${message.name} ver=${message.version} caps=0x${Integer.toHexString(message.caps)}")
-                        mainHandler.post { peerCaps.value = Capabilities.fromMask(message.caps) }
+                        val caps = Capabilities.fromMask(message.caps)
+                        mainHandler.post {
+                            peerCaps.value = caps
+                            KeyboardChannelHolder.caps = caps
+                        }
                     }
                     is StMessage.Ready -> log("PC READY（注入器就绪）")
                     is StMessage.Ping -> {
@@ -85,6 +100,18 @@ class SessionController(context: Context) {
                         }
                         log("PING seq=$seq → 已回 PONG")
                     }
+                    is StMessage.ClipboardSet -> {
+                        // PC → 手机剪贴板同步：按帧累积到 FIN 再解码（protocol.md §4）
+                        clipboardBuffer.write(message.data)
+                        if (message.fin) {
+                            val text = clipboardBuffer.toString("UTF-8")
+                            clipboardBuffer.reset()
+                            mainHandler.post {
+                                latestPcClipboard.value = text
+                                log("PC 剪贴板同步 (${text.length} 字符)")
+                            }
+                        }
+                    }
                     is StMessage.Bye -> log("PC 优雅断开 (reason=${message.reason})")
                     is StMessage.Unknown -> Unit // 兼容规则：未知类型丢弃
                     else -> Unit
@@ -95,7 +122,11 @@ class SessionController(context: Context) {
                 log("连接断开: ${error?.message ?: "对端正常关闭"}")
                 status.value = "已断开（可重新启动监听）"
                 listening.value = false
-                mainHandler.post { channel.value?.close(); channel.value = null }
+                mainHandler.post {
+                    channel.value?.close()
+                    channel.value = null
+                    KeyboardChannelHolder.channel = null
+                }
                 server = null
             }
 
@@ -122,6 +153,7 @@ class SessionController(context: Context) {
     fun stop() {
         channel.value?.close()
         channel.value = null
+        KeyboardChannelHolder.channel = null
         server?.close()
         server = null
         listening.value = false

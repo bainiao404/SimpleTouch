@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- M3 自研 IME：直通(KEY)/直注(TEXT) 双模式 + 触摸条。需用户在系统设置中启用。 -->
+        <service
+            android:name=".SimpleTouchIme"
+            android:exported="true"
+            android:label="SimpleTouch 键盘"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/method" />
+        </service>
+    </application>
+</manifest>

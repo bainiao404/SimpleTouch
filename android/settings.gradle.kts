@@ -22,5 +22,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "SimpleTouch"
 
-// M0 骨架；feature-keyboard 随 M3 加入
-include(":app", ":core:protocol", ":core:bluetooth", ":feature:touchpad", ":feature:hotkeys")
+// M3 加入 feature-keyboard（IME + 文本直注）
+include(":app", ":core:protocol", ":core:bluetooth", ":feature:touchpad", ":feature:hotkeys", ":feature:keyboard")
