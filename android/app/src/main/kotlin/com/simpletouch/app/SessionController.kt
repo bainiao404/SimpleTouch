@@ -7,8 +7,10 @@ import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import com.simpletouch.bluetooth.RfcommChannel
 import com.simpletouch.bluetooth.RfcommServer
 import com.simpletouch.bluetooth.RfcommServerListener
+import com.simpletouch.protocol.Capabilities
 import com.simpletouch.protocol.ProtocolConsts
 import com.simpletouch.protocol.StMessage
 import java.text.SimpleDateFormat
@@ -24,6 +26,9 @@ class SessionController(context: Context) {
     val status = mutableStateOf("未启动")
     val listening = mutableStateOf(false)
     val logs = mutableStateListOf<String>()
+
+    /** 已建立会话时可用的事件通道（触摸板等特征层的唯一发送入口）。 */
+    val channel = mutableStateOf<RfcommChannel?>(null)
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
@@ -48,10 +53,16 @@ class SessionController(context: Context) {
         status.value = "监听中…等待 PC 连接"
         listening.value = true
 
-        val s = RfcommServer(adapter, object : RfcommServerListener {
+        var s: RfcommServer? = null
+        s = RfcommServer(adapter, object : RfcommServerListener {
             override fun onClientConnected(deviceName: String) {
                 log("PC 已连接: $deviceName")
                 sendHello()
+                val srv = s
+                if (srv != null) {
+                    val ch = RfcommChannel(srv, Capabilities(textInject = false, clipboard = false, macros = false, consumer = false))
+                    mainHandler.post { channel.value = ch }
+                }
             }
 
             override fun onFrame(seq: Int, message: StMessage) {
@@ -77,6 +88,7 @@ class SessionController(context: Context) {
                 log("连接断开: ${error?.message ?: "对端正常关闭"}")
                 status.value = "已断开（可重新启动监听）"
                 listening.value = false
+                mainHandler.post { channel.value?.close(); channel.value = null }
                 server = null
             }
 
@@ -101,6 +113,8 @@ class SessionController(context: Context) {
     }
 
     fun stop() {
+        channel.value?.close()
+        channel.value = null
         server?.close()
         server = null
         listening.value = false

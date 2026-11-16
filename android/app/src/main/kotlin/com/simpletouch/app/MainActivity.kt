@@ -18,9 +18,14 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
+import com.simpletouch.feature.touchpad.TouchpadScreen
 
 class MainActivity : ComponentActivity() {
 
@@ -34,7 +39,25 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         session = SessionController(this)
-        setContent { SessionScreen(session) }
+        // 调试/自动化入口：-e auto_touchpad true → 连接建立后自动进入触摸板页
+        val autoTouchpad = intent?.getBooleanExtra("auto_touchpad", false) == true
+        setContent {
+            MaterialTheme {
+                // 必须 remember：否则每次重组都会重置页面状态，点击导航永远失效
+                var page by remember { mutableStateOf(if (autoTouchpad) "touchpad" else "connection") }
+                val channel = session.channel.value
+                if (page == "touchpad" && channel != null) {
+                    TouchpadScreen(channel, onExit = { page = "connection" })
+                } else {
+                    ConnectionScreen(
+                        session = session,
+                        onStart = { maybeStart() },
+                        touchpadEnabled = channel != null,
+                        onOpenTouchpad = { page = "touchpad" },
+                    )
+                }
+            }
+        }
         maybeStart()
     }
 
@@ -55,7 +78,12 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun SessionScreen(session: SessionController) {
+private fun ConnectionScreen(
+    session: SessionController,
+    onStart: () -> Unit,
+    touchpadEnabled: Boolean,
+    onOpenTouchpad: () -> Unit,
+) {
     val status = session.status
     val listening = session.listening
     val logs = session.logs
@@ -70,11 +98,19 @@ private fun SessionScreen(session: SessionController) {
         Text(status.value, style = MaterialTheme.typography.bodyMedium)
 
         Button(
-            onClick = { session.start() },
+            onClick = onStart,
             enabled = !listening.value,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(if (listening.value) "监听中…" else "启动监听")
+        }
+
+        Button(
+            onClick = onOpenTouchpad,
+            enabled = touchpadEnabled,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (touchpadEnabled) "进入触摸板" else "连接后可用")
         }
 
         Text("日志", style = MaterialTheme.typography.titleSmall)

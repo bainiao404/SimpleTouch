@@ -63,21 +63,65 @@ try
     }
     Log.Info($"握手完成: peer={session.PeerName} ver={session.PeerVersion} caps=0x{session.PeerCaps:X}");
 
-    // M0 验收：PING ×100 @200ms → RTT 统计（M1 延迟报告复用该方法）
-    var rtts = new List<double>();
-    for (var i = 0; i < 100 && !cts.IsCancellationRequested; i++)
+    if (argsList.Contains("--ping"))
     {
-        var sw = Stopwatch.StartNew();
-        var pong = await session.PingAsync(Environment.TickCount64, cts.Token);
-        sw.Stop();
-        rtts.Add(sw.Elapsed.TotalMilliseconds);
-        Log.Info($"PING #{i + 1}: {sw.Elapsed.TotalMilliseconds:F1} ms (ts={pong.Timestamp})");
-        await Task.Delay(200, cts.Token);
+        // RTT 测量模式：延迟报告数据源（执行文档 §4）
+        var rtts = new List<double>();
+        for (var i = 0; i < 100 && !cts.IsCancellationRequested; i++)
+        {
+            var sw = Stopwatch.StartNew();
+            var pong = await session.PingAsync(Environment.TickCount64, cts.Token);
+            sw.Stop();
+            rtts.Add(sw.Elapsed.TotalMilliseconds);
+            Log.Info($"PING #{i + 1}: {sw.Elapsed.TotalMilliseconds:F1} ms (ts={pong.Timestamp})");
+            await Task.Delay(200, cts.Token);
+        }
+
+        var sorted = rtts.OrderBy(x => x).ToList();
+        Log.Info($"RTT 统计: N={sorted.Count} P50={Percentile(sorted, 50):F1}ms P95={Percentile(sorted, 95):F1}ms Max={sorted[^1]:F1}ms");
+        await session.SendAsync(new ByeMessage(ProtocolConsts.ByeReason.Normal), CancellationToken.None);
+        return 0;
     }
 
-    var sorted = rtts.OrderBy(x => x).ToList();
-    Log.Info($"RTT 统计: N={sorted.Count} P50={Percentile(sorted, 50):F1}ms P95={Percentile(sorted, 95):F1}ms Max={sorted[^1]:F1}ms");
-    await session.SendAsync(new ByeMessage(ProtocolConsts.ByeReason.Normal), CancellationToken.None);
+    // 事件循环模式：触摸板/键盘事件实时注入（M1 主模式）
+    var injector = new WindowsInputInjector();
+    var exitTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    long moveCount = 0;
+    session.Disconnected += _ => exitTcs.TrySetResult();
+    session.MessageReceived += m =>
+    {
+        switch (m)
+        {
+            case MouseMoveMessage mv:
+                injector.MouseMove(mv.Dx, mv.Dy);
+                Interlocked.Increment(ref moveCount);
+                break;
+            case MouseButtonMessage b:
+                injector.MouseButton(b.Button, b.Action == ProtocolConsts.PressAction.Down);
+                Log.Info($"BUTTON btn={b.Button} action={b.Action}");
+                break;
+            case MouseScrollMessage s:
+                injector.MouseScroll(s.Dx, s.Dy);
+                Log.Info($"SCROLL dx={s.Dx} dy={s.Dy}");
+                break;
+            case ByeMessage:
+                exitTcs.TrySetResult();
+                break;
+        }
+    };
+    Log.Info("事件循环已启动——在平板触摸板上滑动/点按即可控制 PC 指针（Ctrl+C 退出）");
+    _ = Task.Run(async () =>
+    {
+        while (!cts.IsCancellationRequested && !exitTcs.Task.IsCompleted)
+        {
+            try { await Task.Delay(5000, cts.Token); } catch (OperationCanceledException) { break; }
+            var n = Interlocked.Exchange(ref moveCount, 0);
+            Log.Info($"吞吐: {n / 5.0:F0} move/s");
+        }
+    });
+    await exitTcs.Task.WaitAsync(cts.Token);
+    Log.Info("会话结束");
+    try { await session.SendAsync(new ByeMessage(ProtocolConsts.ByeReason.Normal), CancellationToken.None); } catch { /* 传输已断开 */ }
     return 0;
 }
 catch (OperationCanceledException) when (!cts.IsCancellationRequested)

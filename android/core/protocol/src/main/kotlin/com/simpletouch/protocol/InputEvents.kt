@@ -46,8 +46,9 @@ data class Capabilities(
 /**
  * 特征层唯一依赖的发送通道抽象；RfcommChannel 与 HidChannel 是同一接口的两个实现。
  * 实现方负责把事件编码为消息（TEXT 按 UTF-8 码点边界分帧）。
+ * send 为非阻塞调用（内部排队/合并），可安全在手势回调（受限挂起作用域）与主线程使用。
  */
 interface InputChannel {
     val capabilities: Capabilities
-    suspend fun send(event: InputEvent)
+    fun send(event: InputEvent)
 }
