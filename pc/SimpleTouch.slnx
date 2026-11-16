@@ -3,4 +3,6 @@
   <Project Path="SimpleTouch.Agent.Platform.Windows/SimpleTouch.Agent.Platform.Windows.csproj" />
   <Project Path="SimpleTouch.Agent.Tests/SimpleTouch.Agent.Tests.csproj" />
   <Project Path="SimpleTouch.Agent/SimpleTouch.Agent.csproj" />
+  <Project Path="SimpleTouch.Agent.Host/SimpleTouch.Agent.Host.csproj" />
+  <Project Path="SimpleTouch.Agent.Ui/SimpleTouch.Agent.Ui.csproj" />
 </Solution>

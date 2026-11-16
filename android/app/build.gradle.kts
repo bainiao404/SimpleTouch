@@ -21,8 +21,8 @@ android {
         applicationId = "com.simpletouch.app"
         minSdk = 28
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.4.1" // 与 PC Agent <Version> 保持一致（发布检查清单项）
+        versionCode = 4
+        versionName = "0.5.0" // 与 PC Agent <Version> 保持一致（发布检查清单项）
     }
 
     signingConfigs {
