@@ -79,7 +79,8 @@ class RfcommChannel(
         when (event) {
             is InputEvent.PointerButton -> {
                 val now = System.nanoTime()
-                // 快速 down→up 点按对（<150ms）在中间补 45ms 间隙，避免同毫秒 down/up 被应用吞掉
+                // 快速 down→up 点按对（<150ms）在中间补 45ms 间隙，避免同毫秒 down/up 被应用吞掉。
+                // 注意：BT 链路可能把相邻小帧合并送达（见 docs/m2-acceptance.md），PC 端注入侧还会兜底补足
                 if (!event.down && event.button == lastDownButton &&
                     now - lastDownDispatchNanos < TAP_PAIR_NANOS
                 ) {

@@ -93,6 +93,10 @@ try
 
     var exitTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     long moveCount = 0;
+    long lastButtonDownTicks = 0;
+    byte lastDownBtn = 0xFF;
+    // 点按 down/up 目标按住时长（M1 验收报告建议 40–60ms）；设 55 补偿 Thread.Sleep ~15ms 定时器粒度
+    const int TapGapMs = 55;
     session.Disconnected += _ => exitTcs.TrySetResult();
     session.MessageReceived += m =>
     {
@@ -105,6 +109,18 @@ try
                 Interlocked.Increment(ref moveCount);
                 break;
             case MouseButtonMessage b:
+                // 点按间隙兜底：手机端发送侧的 45ms 间隙会被 BT 链路合并（实测同毫秒到达），
+                // 注入前补足到 ~45ms 按住时长，避免极快 down/up 被应用吞掉（M1 已知问题 #2）
+                if (b.Action == ProtocolConsts.PressAction.Down)
+                {
+                    lastDownBtn = b.Button;
+                    lastButtonDownTicks = Environment.TickCount64;
+                }
+                else if (b.Button == lastDownBtn)
+                {
+                    var sinceDown = Environment.TickCount64 - lastButtonDownTicks;
+                    if (sinceDown < TapGapMs) Thread.Sleep((int)(TapGapMs - sinceDown));
+                }
                 injector.MouseButton(b.Button, b.Action == ProtocolConsts.PressAction.Down);
                 Log.Info($"BUTTON btn={b.Button} action={b.Action}");
                 break;
