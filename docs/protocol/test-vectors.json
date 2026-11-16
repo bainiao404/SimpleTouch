@@ -4,7 +4,7 @@
     { "name": "hello_agent", "desc": "HELLO 手机端 (ver=1, caps=0x0F, name=SimpleTouch.Agent)", "hex": "1800010101000F0000001153696D706C65546F7563682E4167656E74" },
     { "name": "hello_pc", "desc": "HELLO PC 端 (ver=1, caps=0x0F, name=SimpleTouch.PC)", "hex": "1500010201000F0000000E53696D706C65546F7563682E5043" },
     { "name": "ready", "desc": "READY 空载荷", "hex": "00000203" },
-    { "name": "mouse_move", "desc": "MOUSE_MOVE dx=15 dy=-30", "hex": "040010040F00FFE2" },
+    { "name": "mouse_move", "desc": "MOUSE_MOVE dx=15 dy=-30", "hex": "040010040F00E2FF" },
     { "name": "mouse_button", "desc": "MOUSE_BUTTON 左键按下", "hex": "020011050000" },
     { "name": "mouse_scroll", "desc": "MOUSE_SCROLL dx=0 dy=-2", "hex": "0200120600FE" },
     { "name": "key", "desc": "KEY code=A(0x04) down, mods=Ctrl", "hex": "03002007040001" },
@@ -12,7 +12,7 @@
     { "name": "text_frag_1", "desc": "TEXT 分帧第1帧(无FIN) 你好", "hex": "0700210900E4BDA0E5A5BD" },
     { "name": "text_frag_2", "desc": "TEXT 分帧第2帧(FIN) !", "hex": "0200210A0121" },
     { "name": "hotkey", "desc": "HOTKEY presetId=5", "hex": "0200220B0500" },
-    { "name": "clipboard_set", "desc": "CLIPBOARD_SET FIN 内容=剪贴板", "hex": "0A00300C01E5A6AAE8B4B4E69DBF" },
+    { "name": "clipboard_set", "desc": "CLIPBOARD_SET FIN 内容=剪贴板", "hex": "0A00300C01E589AAE8B4B4E69DBF" },
     { "name": "ping", "desc": "PING ts=1000", "hex": "0800400DE803000000000000" },
     { "name": "pong", "desc": "PONG 回显 ts=1000", "hex": "0800410EE803000000000000" },
     { "name": "bye", "desc": "BYE reason=0 正常断开", "hex": "0100500F00" }
