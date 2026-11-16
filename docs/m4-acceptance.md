@@ -90,3 +90,28 @@
 - 电池优化白名单弹窗人工确认 + 息屏（灭屏）长时保活观察
 - M2/M3 人工复核项继续有效（多指手势/真实窗口打字，见对应验收文档）
 - PC 发布产物建议在第二台非开发机（无 Realtek BT 的机器）做兼容抽测
+
+## 9. 发布后复盘：双指滚动 ANR（2026-11-17 当天用户报告）
+
+**现象**：双指滚动必致安卓端卡死（ANR，3 次记录 03:25/04:04/04:58）。
+
+**取证链**：logcat `am_anr: Input dispatching timed out` → GC 日志（0.35s 内堆 121→188MB，
+~20B/对象的百万级活对象，"freed 0(0B)"）→ OOM 递归打印死亡螺旋（DefaultExecutor 烧 15.6s CPU）。
+MIUI 触摸驱动 input_filter 丢弃 sendevent 注入的大部分事件码（实测仅 Y/TRACKING_ID 可达），
+无法做多指内核注入；release 包非 debuggable 不可 dumpheap——最终以 Compose 测试
+`performTouchInput` 多指注入做定位与回归。
+
+**根因**：TouchpadScreen 双指滚动两个分支的累积算术**都写反了**——向上分支 `scrollAccum -=`
+（负向发散）、向下分支 `+=`（正向发散），`while` 条件永真 → 主线程死循环以 CPU 速率
+trySend 塞爆 UNLIMITED 队列 → 堆 OOM + 输入超时 ANR。**M1 起即存在，双向滚动都卡死**；
+潜伏 4 个里程碑的原因：adb 无法注入多指 + M1 人工复核只测了向上滚（其 PC 日志 dy=1 实为
+死循环刷屏的前几帧）+ M2–M4 未复测。
+
+**修复与验证**：两分支改向 0 回收；RfcommChannel.send 死通道丢弃事件（防同类问题借
+UNLIMITED 队列 OOM 放大）；新增 `TouchpadScrollGestureTest`（performTouchInput 双指双向
+滚动 + 双指点按右键）——修复前滚动用例挂 6min 至 keyDispatchingTimedOut，修复后 3/3 通过。
+版本 0.4.1 双端重打发布产物并冒烟通过。
+
+**教训**：① 无法自动化的手势路径必须尽快补 Compose 多指注入测试（performTouchInput
+原生支持）；② 累积量循环的算术方向要"向 0 回收"对偶检查；③ UNLIMITED 队列必须有死
+通道短路，否则任何上游 bug 都会放大成 OOM。
