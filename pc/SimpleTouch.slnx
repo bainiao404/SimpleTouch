@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="SimpleTouch.Agent.Core/SimpleTouch.Agent.Core.csproj" />
+  <Project Path="SimpleTouch.Agent.Platform.Windows/SimpleTouch.Agent.Platform.Windows.csproj" />
+  <Project Path="SimpleTouch.Agent.Tests/SimpleTouch.Agent.Tests.csproj" />
+  <Project Path="SimpleTouch.Agent/SimpleTouch.Agent.csproj" />
+</Solution>
