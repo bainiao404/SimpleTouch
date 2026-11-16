@@ -10,7 +10,7 @@
 | 单指滑动 | `input swipe` → MOVE 帧（吞吐 4 帧/s，adb 事件粒度粗；真手指 60–120Hz） |
 | 指针位移 | Windows 光标 (544,786) → (2267,1123)，方向正确 |
 | 单指点按 | `BUTTON btn=0 action=0` + `action=1`（左键按下/抬起，SendInput 注入） |
-| 右键/中键/滚轮 | 与左键同一 MOUSE_BUTTON/MOUSE_SCROLL 通道 + 向量单测覆盖；双指/三指手势需人工复核 |
+| 右键/中键/滚轮 | **人工复核通过（2026-11-17）**：`btn=1 down/up ×4`（双指点按→右键）、`btn=2 down/up ×1`（三指→中键）、`SCROLL dx=0 dy=1 ×N`（双指滑动→滚轮），同一 MOUSE_BUTTON/MOUSE_SCROLL 通道 |
 
 ## PING RTT 对比（协议 v1，N=100 @200ms）
 
