@@ -5,6 +5,7 @@ import com.simpletouch.protocol.InputChannel
 import com.simpletouch.protocol.InputEvent
 import com.simpletouch.protocol.ProtocolConsts
 import com.simpletouch.protocol.StMessage
+import com.simpletouch.protocol.TextFrameSplitter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -113,17 +114,24 @@ class RfcommChannel(
             is InputEvent.HotkeyTrigger -> server.send(StMessage.Hotkey(event.presetId))
             is InputEvent.ConsumerAction -> server.send(StMessage.Hotkey(event.presetId))
             is InputEvent.TextInput -> sendText(event.text)
+            is InputEvent.ClipboardSet -> sendClipboard(event.text)
             is InputEvent.PointerMove -> Unit // 走合并路径，不会入队
         }
     }
 
-    /** 单帧 UTF-8 直注（≤4095B）；跨帧分帧器随 M3 文本流完善。 */
+    /** TEXT 分帧发送：TextFrameSplitter 保证码点边界（protocol.md §4），末帧带 FIN。 */
     private suspend fun sendText(text: String) {
-        val bytes = text.toByteArray(Charsets.UTF_8)
-        val chunks = bytes.toList().chunked(ProtocolConsts.MAX_PAYLOAD - 1)
-        chunks.forEachIndexed { index, chunk ->
-            val fin = index == chunks.lastIndex
-            server.send(StMessage.Text(fin, chunk.toByteArray()))
+        val frames = TextFrameSplitter.split(text)
+        frames.forEachIndexed { index, chunk ->
+            server.send(StMessage.Text(fin = index == frames.lastIndex, chunk))
+        }
+    }
+
+    /** CLIPBOARD_SET 分帧发送（手机→PC 方向），分帧规则同 TEXT。 */
+    private suspend fun sendClipboard(text: String) {
+        val frames = TextFrameSplitter.split(text)
+        frames.forEachIndexed { index, chunk ->
+            server.send(StMessage.ClipboardSet(fin = index == frames.lastIndex, chunk))
         }
     }
 

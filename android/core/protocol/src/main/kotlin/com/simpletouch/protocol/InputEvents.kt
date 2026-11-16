@@ -14,6 +14,9 @@ sealed class InputEvent {
     /** 媒体/consumer 动作经 HOTKEY 通道：代理模式由 PC 端映射表转为 VK_MEDIA_*，HID 模式走 Consumer Page。 */
     data class ConsumerAction(val presetId: Int) : InputEvent()
     data class TextInput(val text: String) : InputEvent()
+
+    /** 剪贴板同步（手机→PC 方向；PC→手机由会话层接收，不走输入事件）。 */
+    data class ClipboardSet(val text: String) : InputEvent()
     data class HotkeyTrigger(val presetId: Int) : InputEvent()
 }
 

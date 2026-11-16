@@ -1,6 +1,9 @@
 package com.simpletouch.app
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -32,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import com.simpletouch.feature.hotkeys.HotkeyPanelScreen
+import com.simpletouch.feature.keyboard.TextInjectScreen
 import com.simpletouch.feature.touchpad.TouchpadScreen
 
 class MainActivity : ComponentActivity() {
@@ -46,8 +50,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        session = SessionController(this)
-        settingsStore = SettingsStore(this)
+        // session/settings 由进程级 SimpleTouchApp 托管（IME 服务同进程共享）
+        session = (application as SimpleTouchApp).session
+        settingsStore = (application as SimpleTouchApp).settingsStore
         // 调试/自动化入口：-e auto_touchpad true → 连接建立后自动进入触摸板页
         val autoTouchpad = intent?.getBooleanExtra("auto_touchpad", false) == true
         setContent {
@@ -68,6 +73,14 @@ class MainActivity : ComponentActivity() {
                             caps = session.peerCaps.value,
                             onBack = { page = "connection" },
                         )
+                    page == "text" && channel != null ->
+                        TextInjectScreen(
+                            channel = channel,
+                            caps = session.peerCaps.value,
+                            pcClipboard = session.latestPcClipboard.value,
+                            onCopyPcToPhone = { copyToPhoneClipboard(it) },
+                            onBack = { page = "connection" },
+                        )
                     page == "settings" ->
                         SettingsScreen(
                             store = settingsStore,
@@ -77,8 +90,10 @@ class MainActivity : ComponentActivity() {
                         session = session,
                         onStart = { maybeStart() },
                         touchpadEnabled = channel != null,
+                        textEnabled = channel != null,
                         hotkeysEnabled = channel != null,
                         onOpenTouchpad = { page = "touchpad" },
+                        onOpenText = { page = "text" },
                         onOpenHotkeys = { page = "hotkeys" },
                         onOpenSettings = { page = "settings" },
                     )
@@ -86,6 +101,11 @@ class MainActivity : ComponentActivity() {
             }
         }
         maybeStart()
+    }
+
+    private fun copyToPhoneClipboard(text: String) {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("SimpleTouch", text))
     }
 
     private fun maybeStart() {
@@ -99,7 +119,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        session.stop()
+        // session 托管在 Application，Activity 销毁不停止会话（IME/后台仍可用）
         super.onDestroy()
     }
 }
@@ -109,8 +129,10 @@ private fun ConnectionScreen(
     session: SessionController,
     onStart: () -> Unit,
     touchpadEnabled: Boolean,
+    textEnabled: Boolean,
     hotkeysEnabled: Boolean,
     onOpenTouchpad: () -> Unit,
+    onOpenText: () -> Unit,
     onOpenHotkeys: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
@@ -147,19 +169,31 @@ private fun ConnectionScreen(
                 Text(if (touchpadEnabled) "触摸板" else "触摸板（连接后可用）")
             }
             Button(
+                onClick = onOpenText,
+                enabled = textEnabled,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(if (textEnabled) "文本" else "文本（连接后可用）")
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Button(
                 onClick = onOpenHotkeys,
                 enabled = hotkeysEnabled,
                 modifier = Modifier.weight(1f),
             ) {
                 Text(if (hotkeysEnabled) "快捷键" else "快捷键（连接后可用）")
             }
-        }
-
-        Button(
-            onClick = onOpenSettings,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("设置")
+            Button(
+                onClick = onOpenSettings,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("设置")
+            }
         }
 
         Text("日志", style = MaterialTheme.typography.titleSmall)

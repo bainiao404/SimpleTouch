@@ -84,12 +84,36 @@ try
         return 0;
     }
 
-    // 事件循环模式：触摸板/键盘事件实时注入（M1 主模式，M2 增加 HOTKEY/设置）
+    // 事件循环模式：触摸板/键盘事件实时注入（M1 主模式，M2 增加 HOTKEY/设置，M3 增加文本/剪贴板）
     var injector = new WindowsInputInjector();
     var configDir = Path.Combine(AppContext.BaseDirectory, "config");
     var hotkeyMap = HotkeyMap.LoadOrCreate(Path.Combine(configDir, "hotkeys.json"));
     var settings = AgentSettings.LoadOrCreate(Path.Combine(configDir, "settings.json"));
     Log.Info($"配置: hotkeys.json {hotkeyMap.Count} 项预设, moveScale={settings.MoveScale:0.##}");
+
+    // M3 剪贴板：轮询监听 + 双向同步（防回环：手机刚推来的内容不回推）
+    var clipboard = new WindowsClipboard();
+    clipboard.StartMonitoring();
+    string? lastClipboardFromPhone = null;
+    clipboard.TextChanged += text =>
+    {
+        if (text == lastClipboardFromPhone)
+        {
+            Log.Info("剪贴板变更与手机端推送内容相同，跳过回推（防回环）");
+            return;
+        }
+        Log.Info($"PC 剪贴板变更 → 推送 CLIPBOARD_SET ({text.Length} 字符)");
+        var frames = TextFrameSplitter.Split(text);
+        _ = Task.Run(async () =>
+        {
+            foreach (var (chunk, i) in frames.Select((c, i) => (c, i)))
+                await session.SendAsync(new ClipboardSetMessage(i == frames.Count - 1, chunk));
+        });
+    };
+
+    // M3 TEXT/CLIPBOARD_SET 分帧重组缓冲（仅接收线程访问）
+    var pendingText = new List<byte>();
+    var pendingClipboard = new List<byte>();
 
     var exitTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     long moveCount = 0;
@@ -127,6 +151,28 @@ try
             case MouseScrollMessage s:
                 injector.MouseScroll(s.Dx, s.Dy);
                 Log.Info($"SCROLL dx={s.Dx} dy={s.Dy}");
+                break;
+            case TextMessage t:
+                pendingText.AddRange(t.Data);
+                if (t.Fin)
+                {
+                    var text = System.Text.Encoding.UTF8.GetString(pendingText.ToArray());
+                    pendingText.Clear();
+                    Log.Info($"TEXT 直注 {text.Length} 字符");
+                    // 多字符注入耗时（逐码元 SendInput），放线程池避免拖慢接收线程
+                    _ = Task.Run(() => injector.Text(text));
+                }
+                break;
+            case ClipboardSetMessage c:
+                pendingClipboard.AddRange(c.Data);
+                if (c.Fin)
+                {
+                    var clipText = System.Text.Encoding.UTF8.GetString(pendingClipboard.ToArray());
+                    pendingClipboard.Clear();
+                    lastClipboardFromPhone = clipText;
+                    Log.Info($"CLIPBOARD_SET ← 手机 ({clipText.Length} 字符) → 写入 PC 剪贴板");
+                    _ = Task.Run(() => clipboard.SetText(clipText));
+                }
                 break;
             case HotkeyMessage h:
                 if (hotkeyMap.TryGetValue(h.PresetId, out var preset))
