@@ -9,7 +9,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RootNamespace>SimpleTouch.Agent</RootNamespace>
     <!-- M4 起双端版本号一致（Android versionName 同步）；协议版本见 ProtocolConsts（未变更=1） -->
-    <Version>0.4.0</Version>
+    <Version>0.4.1</Version>
     <!-- CET 闪退规避（方案文档 §6 兼容性基线）：21H2 类系统启动即 FailFast 的问题，
          出厂必须保留此项，发布检查清单核验 -->
     <CETCompat>false</CETCompat>

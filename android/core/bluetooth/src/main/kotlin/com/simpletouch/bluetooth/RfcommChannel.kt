@@ -67,6 +67,9 @@ class RfcommChannel(
     }
 
     override fun send(event: InputEvent) {
+        // 通道已死（发送失败/已关闭）时丢弃事件：消费者不在了，UNLIMITED 队列只会
+        // 无限堆积（M4 复盘：手势层一个死循环曾借此把堆撑到 256MB 触发 ANR）
+        if (!running) return
         when (event) {
             is InputEvent.PointerMove -> synchronized(lock) {
                 accX += event.dx
