@@ -59,7 +59,10 @@ class RfcommServer(
                 val client = try {
                     server.accept() // 阻塞等待 PC 连接
                 } catch (e: IOException) {
-                    break // close() 会解除 accept 阻塞——仅发生在用户主动停止
+                    // close() 会解除 accept 阻塞（用户停止）；蓝牙开关/适配器异常同样走这里——
+                    // running 仍在时必须上报，否则上层停留在「监听中」假象
+                    if (running) listener.onListenFailed(e)
+                    break
                 }
                 runSession(client)
             }

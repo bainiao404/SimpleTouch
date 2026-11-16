@@ -164,7 +164,9 @@ async Task RunAgentLoopAsync(string targetDevice, CancellationToken ct)
         catch (Exception ex)
         {
             attempt++;
-            Log.Error($"连接失败: {ex.Message}");
+            // SocketException 等异常 Message 可能为空串，补类型名保证日志可读
+            var reason = string.IsNullOrWhiteSpace(ex.Message) ? ex.GetType().Name : ex.Message;
+            Log.Error($"连接失败: {reason}");
             var delayMs = BackoffDelayMs(attempt);
             Log.Info($"{delayMs / 1000.0:0.#}s 后自动重试（Ctrl+C 退出）");
             await Task.Delay(delayMs, ct);

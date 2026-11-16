@@ -46,6 +46,9 @@ class SessionController(context: Context) {
     private val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
     private var server: RfcommServer? = null
 
+    /** 监听重试计数（连接成功归零；驱动 2s×n 封顶 15s 的重听退避）。 */
+    private var listenRetryAttempt = 0
+
     /** CLIPBOARD_SET 分帧累积缓冲（仅读循环线程访问，FIN 时整体解码）。 */
     private val clipboardBuffer = java.io.ByteArrayOutputStream()
 
@@ -66,18 +69,27 @@ class SessionController(context: Context) {
 
     fun start() {
         if (server != null) return
+        listenRetryAttempt = 0
+        listening.value = true
+        startListening()
+    }
+
+    /** 建 RFCOMM 监听；蓝牙不可用或监听失败时自动退避重试（蓝牙开关切换/适配器异常的正式解）。 */
+    private fun startListening() {
+        if (server != null) return
         if (adapter == null || !adapter.isEnabled) {
-            setStatus("蓝牙不可用（请检查系统蓝牙开关）")
+            setStatus("蓝牙不可用，待蓝牙就绪后自动重试…")
+            scheduleRelisten()
             return
         }
         setStatus("监听中…等待 PC 连接")
-        listening.value = true
         peerCaps.value = Capabilities(textInject = false, clipboard = false, macros = false, consumer = false)
 
         var s: RfcommServer? = null
         s = RfcommServer(adapter, object : RfcommServerListener {
             override fun onClientConnected(deviceName: String) {
                 log("PC 已连接: $deviceName")
+                listenRetryAttempt = 0
                 setStatus("已连接: $deviceName")
                 sendHello()
                 val srv = s
@@ -146,13 +158,30 @@ class SessionController(context: Context) {
 
             override fun onListenFailed(error: Exception) {
                 log("监听失败: ${error.message}")
-                setStatus("监听失败")
-                listening.value = false
-                server = null
+                if (!listening.value) {  // 用户主动停止：落终态
+                    setStatus("监听失败")
+                    server = null
+                    return
+                }
+                // 蓝牙开关/适配器异常：退避重试，前台服务保活下自动恢复监听
+                scheduleRelisten()
             }
         })
         server = s
         s.start()
+    }
+
+    /** 监听退避重试：2s×次数，15s 封顶；用户停止（listening=false）后不再触发。 */
+    private fun scheduleRelisten() {
+        server = null
+        listenRetryAttempt++
+        val delayMs = minOf(2000L * listenRetryAttempt, 15_000L)
+        mainHandler.postDelayed({
+            if (listening.value && server == null) {
+                log("第 $listenRetryAttempt 次尝试重新监听…")
+                startListening()
+            }
+        }, delayMs)
     }
 
     /** 协议 §5：双方各自立即发 HELLO。M0 手机端 caps=0（尚无可用能力）。 */
