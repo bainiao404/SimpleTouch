@@ -20,6 +20,7 @@ import java.util.Locale
 
 /**
  * M0 会话控制器：启动 RFCOMM 监听 → 双向 HELLO → 自动回 PONG（PC 端测 RTT）。
+ * M4：serverSocket 常驻——会话断开后自动继续监听等 PC 退避重连，仅用户点「停止监听」才关闭。
  * 状态用 Compose State 托管，回调统一经主线程 Handler 切换。
  */
 class SessionController(context: Context) {
@@ -37,10 +38,16 @@ class SessionController(context: Context) {
     /** PC → 手机方向推送的最新剪贴板内容（CLIPBOARD_SET 按帧累积到 FIN）。 */
     val latestPcClipboard = mutableStateOf<String?>(null)
 
+    /** 状态文本变更回调（ConnectionService 刷新通知用；在状态赋值线程触发）。 */
+    var onStatusChanged: ((String) -> Unit)? = null
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
     private val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
     private var server: RfcommServer? = null
+
+    /** 监听重试计数（连接成功归零；驱动 2s×n 封顶 15s 的重听退避）。 */
+    private var listenRetryAttempt = 0
 
     /** CLIPBOARD_SET 分帧累积缓冲（仅读循环线程访问，FIN 时整体解码）。 */
     private val clipboardBuffer = java.io.ByteArrayOutputStream()
@@ -50,29 +57,46 @@ class SessionController(context: Context) {
         while (logs.size > 200) logs.removeAt(0)
     }
 
+    /** 统一状态出口：更新 UI 状态 + 通知前台服务刷新文案。 */
+    private fun setStatus(text: String) {
+        status.value = text
+        onStatusChanged?.invoke(text)
+    }
+
     fun onPermissionDenied() {
-        status.value = "蓝牙权限被拒绝，无法监听"
+        setStatus("蓝牙权限被拒绝，无法监听")
     }
 
     fun start() {
         if (server != null) return
+        listenRetryAttempt = 0
+        listening.value = true
+        startListening()
+    }
+
+    /** 建 RFCOMM 监听；蓝牙不可用或监听失败时自动退避重试（蓝牙开关切换/适配器异常的正式解）。 */
+    private fun startListening() {
+        if (server != null) return
         if (adapter == null || !adapter.isEnabled) {
-            status.value = "蓝牙不可用（请检查系统蓝牙开关）"
+            setStatus("蓝牙不可用，待蓝牙就绪后自动重试…")
+            scheduleRelisten()
             return
         }
-        status.value = "监听中…等待 PC 连接"
-        listening.value = true
+        setStatus("监听中…等待 PC 连接")
         peerCaps.value = Capabilities(textInject = false, clipboard = false, macros = false, consumer = false)
 
         var s: RfcommServer? = null
         s = RfcommServer(adapter, object : RfcommServerListener {
             override fun onClientConnected(deviceName: String) {
                 log("PC 已连接: $deviceName")
+                listenRetryAttempt = 0
+                setStatus("已连接: $deviceName")
                 sendHello()
                 val srv = s
                 if (srv != null) {
                     val ch = RfcommChannel(srv, Capabilities(textInject = false, clipboard = false, macros = false, consumer = false))
                     mainHandler.post {
+                        // 每个会话新建通道；旧通道已在 onDisconnected 清理
                         channel.value = ch
                         // IME 服务与 MainActivity 同进程，经 holder 共享通道
                         KeyboardChannelHolder.channel = ch
@@ -120,25 +144,44 @@ class SessionController(context: Context) {
 
             override fun onDisconnected(error: Exception?) {
                 log("连接断开: ${error?.message ?: "对端正常关闭"}")
-                status.value = "已断开（可重新启动监听）"
-                listening.value = false
+                // 半包残留清理，防止跨会话污染
+                clipboardBuffer.reset()
                 mainHandler.post {
                     channel.value?.close()
                     channel.value = null
                     KeyboardChannelHolder.channel = null
                 }
-                server = null
+                // M4：serverSocket 常驻继续监听，等 PC 退避重连；仅用户主动停止时才算结束
+                if (!listening.value) return  // stop() 已设置最终状态
+                setStatus("连接断开，等待 PC 重连…")
             }
 
             override fun onListenFailed(error: Exception) {
                 log("监听失败: ${error.message}")
-                status.value = "监听失败"
-                listening.value = false
-                server = null
+                if (!listening.value) {  // 用户主动停止：落终态
+                    setStatus("监听失败")
+                    server = null
+                    return
+                }
+                // 蓝牙开关/适配器异常：退避重试，前台服务保活下自动恢复监听
+                scheduleRelisten()
             }
         })
         server = s
         s.start()
+    }
+
+    /** 监听退避重试：2s×次数，15s 封顶；用户停止（listening=false）后不再触发。 */
+    private fun scheduleRelisten() {
+        server = null
+        listenRetryAttempt++
+        val delayMs = minOf(2000L * listenRetryAttempt, 15_000L)
+        mainHandler.postDelayed({
+            if (listening.value && server == null) {
+                log("第 $listenRetryAttempt 次尝试重新监听…")
+                startListening()
+            }
+        }, delayMs)
     }
 
     /** 协议 §5：双方各自立即发 HELLO。M0 手机端 caps=0（尚无可用能力）。 */
@@ -151,12 +194,13 @@ class SessionController(context: Context) {
     }
 
     fun stop() {
+        // 先落最终状态再关 server：onDisconnected 回调据此区分「用户停止」与「意外断开」
+        listening.value = false
+        setStatus("已停止")
         channel.value?.close()
         channel.value = null
         KeyboardChannelHolder.channel = null
         server?.close()
         server = null
-        listening.value = false
-        status.value = "已停止"
     }
 }

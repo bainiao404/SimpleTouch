@@ -25,3 +25,6 @@ captures/
 *.log
 Thumbs.db
 .DS_Store
+
+# ===== 签名（本地生成，不入库）=====
+android/keystore/
