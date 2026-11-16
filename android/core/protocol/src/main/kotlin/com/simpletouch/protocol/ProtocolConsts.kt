@@ -56,4 +56,22 @@ object ProtocolConsts {
         const val MACROS = 0x04
         const val CONSUMER = 0x08
     }
+
+    /**
+     * HOTKEY presetId 枚举表（docs/protocol.md §4 HOTKEY，M2 定稿）。
+     * 0x0010–0x00FF 预留给 PC 映射表自定义；未收录值 PC 端忽略（兼容规则）。
+     */
+    object HotkeyPreset {
+        const val VOLUME_UP = 0x0001
+        const val VOLUME_DOWN = 0x0002
+        const val VOLUME_MUTE = 0x0003
+        const val PLAY_PAUSE = 0x0004
+        const val MEDIA_PREV = 0x0005
+        const val MEDIA_NEXT = 0x0006
+        const val PAGE_UP = 0x0007
+        const val PAGE_DOWN = 0x0008
+        const val F5 = 0x0009
+        const val ESC = 0x000A
+        const val WIN_D = 0x000B
+    }
 }

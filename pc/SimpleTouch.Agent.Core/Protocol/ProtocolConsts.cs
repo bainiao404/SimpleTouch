@@ -63,4 +63,20 @@ public static class ProtocolConsts
         public const int Macros = 0x04;
         public const int Consumer = 0x08;
     }
+
+    /// <summary>HOTKEY presetId 枚举表（docs/protocol.md §4 HOTKEY，M2 定稿）。</summary>
+    public static class HotkeyPreset
+    {
+        public const ushort VolumeUp = 0x0001;
+        public const ushort VolumeDown = 0x0002;
+        public const ushort VolumeMute = 0x0003;
+        public const ushort PlayPause = 0x0004;
+        public const ushort MediaPrev = 0x0005;
+        public const ushort MediaNext = 0x0006;
+        public const ushort PageUp = 0x0007;
+        public const ushort PageDown = 0x0008;
+        public const ushort F5 = 0x0009;
+        public const ushort Esc = 0x000A;
+        public const ushort WinD = 0x000B;
+    }
 }

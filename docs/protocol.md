@@ -94,7 +94,27 @@
 - 超过 4095 字节的内容按 UTF-8 码点边界分帧；接收方按序拼接至 FIN
 - TEXT 的 data 必须是完整 UTF-8 码点序列，不跨帧拆码点
 
-### HOTKEY (0x22)：`presetId:u16`（映射表存于 PC 端 JSON 配置，预设含媒体键）
+### HOTKEY (0x22)：`presetId:u16`（M2 细化枚举见下表；映射表存于 PC 端 JSON 配置）
+
+presetId 枚举表（协议 v1，M2 定稿）：
+
+| presetId | 常量名 | 名称 | 类别 | PC 默认映射（hotkeys.json 可改） |
+| -------- | ------ | ---- | ---- | -------------------------------- |
+| 0x0001 | VOLUME_UP | 音量+ | consumer | VK_VOLUME_UP (0xAF) |
+| 0x0002 | VOLUME_DOWN | 音量− | consumer | VK_VOLUME_DOWN (0xB0) |
+| 0x0003 | VOLUME_MUTE | 静音 | consumer | VK_VOLUME_MUTE (0xAD) |
+| 0x0004 | PLAY_PAUSE | 播放/暂停 | consumer | VK_MEDIA_PLAY_PAUSE (0xB3) |
+| 0x0005 | MEDIA_PREV | 上一曲 | consumer | VK_MEDIA_PREV_TRACK (0xB1) |
+| 0x0006 | MEDIA_NEXT | 下一曲 | consumer | VK_MEDIA_NEXT_TRACK (0xB2) |
+| 0x0007 | PAGE_UP | PgUp | macro | VK_PRIOR (0x21) |
+| 0x0008 | PAGE_DOWN | PgDn | macro | VK_NEXT (0x22) |
+| 0x0009 | F5 | F5 | macro | VK_F5 (0x74) |
+| 0x000A | ESC | Esc | macro | VK_ESCAPE (0x1B) |
+| 0x000B | WIN_D | Win+D | macro | Meta + VK_D (0x44) |
+
+- 类别 = consumer 的预设依赖 PC 端 **CONSUMER** 能力位；macro 依赖 **MACROS** 能力位。
+  手机端快捷面板按 PC HELLO.caps 门控（禁用不支持类别的按钮）
+- 0x0010–0x00FF 预留给 PC 映射表自定义预设；未收录的 presetId 一律忽略并记日志（兼容规则）
 
 ### PING (0x40) / PONG (0x41)：`ts:u64`（发送方毫秒时间戳）。PONG 必须逐字节回显 payload
 
@@ -127,4 +147,4 @@
 
 - hex 为**完整帧**（含帧头）的十六进制串
 - 双端单测要求：① 解码字段断言正确；② 以相同 seq 重新编码后与向量逐字节一致
-- 已覆盖：HELLO×2、READY、MOUSE_MOVE/BUTTON/SCROLL、KEY、TEXT（单帧 FIN + 两帧分帧）、HOTKEY、CLIPBOARD_SET（中文）、PING/PONG、BYE
+- 已覆盖：HELLO×2、READY、MOUSE_MOVE/BUTTON/SCROLL、KEY、TEXT（单帧 FIN + 两帧分帧）、HOTKEY×2（generic + Win+D）、CLIPBOARD_SET（中文）、PING/PONG、BYE
